@@ -93,7 +93,8 @@ This file tracks implementation requirements and coding guidelines for the retro
 /{env}/data/{folder}/public/users/{userId}/wishlists/{id}/wishes/{wishId}
 /{env}/data/{folder}/public/nicknameIndex/{nickname}  # {userId}; enforces nickname uniqueness
 /{env}/data/{folder}/private/users/{userId}           # Private profile (email, lastLogin, ...)
-/{env}/data/{folder}/private/users/{userId}/settings/{wikipedia|rawg|ui}
+/{env}/data/{folder}/private/users/{userId}/settings/{wikipedia|rawg|ui|ai}
+/{env}/data/{folder}/private/users/{userId}/settings/aiKeys    # AI API keys, only if the user stores them in their account
 /{env}/data/{folder}/private/users/{userId}/{items|collections|wishlists}/...  # Private counterparts
 /{document=**}                                        # Everything else denied
 ```

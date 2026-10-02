@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useUISettings } from '../utils/hooks';
+import { useQueuedImageUrl } from '../api/google-drive/uploadQueue';
 
 interface PreviewImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   driveId?: string;
@@ -27,6 +28,8 @@ export const PreviewImage: React.FC<PreviewImageProps> = ({
   const [error, setError] = useState<boolean>(false);
   const [uiSettings] = useUISettings();
   const enableProxy = uiSettings?.enableImageProxy ?? true;
+  // Photos still in the background upload queue are shown from memory.
+  const queuedUrl = useQueuedImageUrl(driveId);
 
   // console.log(
   //   'Using image size:',
@@ -44,6 +47,10 @@ export const PreviewImage: React.FC<PreviewImageProps> = ({
 
     return () => mediaQuery.removeEventListener('change', handleResize);
   }, []);
+
+  if (queuedUrl) {
+    return <img src={queuedUrl} alt={alt} className={className} {...props} />;
+  }
 
   // If there's no ID, immediately default to the fallback
   if (!driveId) {

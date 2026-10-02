@@ -20,6 +20,8 @@ import { resolveDataCollectionPath } from '../api/firestore/runtimeConfig';
 import { useGoogleDriveAuth } from '../utils/hooks';
 import MyCollectiblesPage from '../pages/MyCollectiblesPage';
 import LoginWithGoogle from './LoginWithGoogle';
+import UploadQueueIndicator from './UploadQueueIndicator';
+import { uploadQueue } from '../api/google-drive/uploadQueue';
 import { useCurrentUser } from '../utils/hooks';
 
 type AccessClaims = {
@@ -75,6 +77,16 @@ function App() {
     useGetRuntimeConfigQuery(undefined, {
       skip: !isAuthenticated || !isAuthorizedForMain || !isAuthResolved,
     });
+
+  const currentUserId = currentUser?.uid;
+  useEffect(() => {
+    // Background Drive uploads are queued per user and resume after reloads.
+    if (currentUserId) {
+      void uploadQueue.start(currentUserId);
+    } else {
+      uploadQueue.stop();
+    }
+  }, [currentUserId]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -311,6 +323,7 @@ function App() {
           </div>
         </div>
         <Footer />
+        {isAuthorizedForMain && <UploadQueueIndicator />}
       </div>
     </HashRouter>
   );

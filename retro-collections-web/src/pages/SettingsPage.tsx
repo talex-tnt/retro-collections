@@ -1,6 +1,7 @@
 import SettingsWiki from '../components/SettingsWiki';
 import SettingsRawg from '../components/SettingsRawg';
 import SettingsUI from '../components/SettingsUI';
+import SettingsAI from '../components/SettingsAI';
 
 export default function SettingsPage() {
   return (
@@ -10,6 +11,7 @@ export default function SettingsPage() {
         <SettingsWiki />
         <SettingsRawg />
         <SettingsUI />
+        <SettingsAI />
       </div>
     </div>
   );

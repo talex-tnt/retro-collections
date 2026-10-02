@@ -914,6 +914,71 @@ service cloud.firestore {
           && isValidSetting(request.resource.data);
       }
 
+      // AI assistant preferences and provider list (no API keys) - Tests 5.1.1-5.1.8
+      match /private/users/{userId}/settings/ai {
+        function isUserOwner() {
+          return isOwner({'userId': userId}, 'userId');
+        }
+
+        function isValidSetting(data) {
+          return hasOnlyValidKeys(data, ['keyStorage', 'defaultProviderId', 'providers', 'aiImageMaxSize', 'driveImageMode', 'driveImageMaxSize', 'extraInstructions'])
+            && data.keyStorage in ['local', 'account'] // Test 5.1.5
+            && data.defaultProviderId is string
+            && data.defaultProviderId.size() <= 100
+            && data.providers is list
+            && data.providers.size() <= 20 // Test 5.1.7
+            && data.aiImageMaxSize is int
+            && data.aiImageMaxSize >= 256
+            && data.aiImageMaxSize <= 4096
+            && data.driveImageMode in ['original', 'resized']
+            && data.driveImageMaxSize is int
+            && data.driveImageMaxSize >= 512
+            && data.driveImageMaxSize <= 8192
+            && data.extraInstructions is string
+            && data.extraInstructions.size() <= 2000; // Test 5.1.8
+        }
+
+        allow read: if
+          environmentAccessAllowed()
+          && folderMatchesConfig()
+          && isUserOwner(); // Tests 5.1.2, 5.1.3
+
+        allow write: if
+          environmentAccessAllowed()
+          && folderMatchesConfig()
+          && isUserOwner() // Tests 5.1.1, 5.1.4
+          && isValidSetting(request.resource.data); // Tests 5.1.5-5.1.8
+      }
+
+      // AI provider API keys, only when the user opts to store them in their account - Tests 5.2.1-5.2.6
+      match /private/users/{userId}/settings/aiKeys {
+        function isUserOwner() {
+          return isOwner({'userId': userId}, 'userId');
+        }
+
+        function isValidKeys(data) {
+          return hasOnlyValidKeys(data, ['keys']) // Test 5.2.4
+            && data.keys is map // Test 5.2.5
+            && data.keys.size() <= 20;
+        }
+
+        allow read: if
+          environmentAccessAllowed()
+          && folderMatchesConfig()
+          && isUserOwner(); // Tests 5.2.1, 5.2.2, 5.2.6
+
+        allow create, update: if
+          environmentAccessAllowed()
+          && folderMatchesConfig()
+          && isUserOwner() // Test 5.2.1
+          && isValidKeys(request.resource.data); // Tests 5.2.4, 5.2.5
+
+        allow delete: if
+          environmentAccessAllowed()
+          && folderMatchesConfig()
+          && isUserOwner(); // Test 5.2.3
+      }
+
       // Items are now stored directly under the user document (no collections)
       match /private/users/{userId}/items/{itemId} {
         function isUserOwner() {

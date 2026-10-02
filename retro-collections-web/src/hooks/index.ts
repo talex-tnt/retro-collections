@@ -11,3 +11,4 @@ export const useIsAdmin = (user: unknown) => {
 
   return isAdmin;
 };
+export * from './useAISettings';

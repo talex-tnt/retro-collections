@@ -14,7 +14,7 @@ import CollapsePanel from './CollapsePanel';
 import SelectTags from './SelectTags';
 import ImportModal from './ImportModal';
 import DriveFolderModal from './DriveFolderModal';
-import { AIImageAnalyzer } from './AIImageAnalyzer';
+import { ItemAssistant } from './ItemAssistant';
 import type { PreparedImportItem } from '../utils/useDriveImport';
 import type { FolderType } from '../api/firestore/types/shared';
 
@@ -305,9 +305,9 @@ function NewItem({
           )}
 
           {/* AI IMAGE ANALYZER TRIGGER PANEL */}
-          <AIImageAnalyzer
+          <ItemAssistant
             currentTags={selectedTags}
-            onAnalysisSuccess={handleApplyAISuggestions}
+            onApply={handleApplyAISuggestions}
           />
         </div>
 
