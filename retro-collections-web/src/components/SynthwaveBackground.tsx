@@ -38,6 +38,19 @@ const MAX_SCROLL_BOOST = 6;
 const SCROLL_BOOST_DECAY = 2.5;
 const MAX_DPR = 1.5;
 
+// Floor grid geometry (world units; the camera sits CAMERA_HEIGHT above it).
+const CAMERA_HEIGHT = 1;
+/** Focal length relative to the larger screen side (~65° field of view). */
+const FOCAL_FACTOR = 0.8;
+/** Row spacing: a square tile this many times across the bottom edge. */
+const ROW_TILES_ACROSS = 6;
+/**
+ * Target tile width along the bottom edge, in CSS pixels: wide screens get
+ * more vertical lines, phones fewer (~14 on a 1280px desktop, ~4 on a phone).
+ */
+const COLUMN_TILE_PX = 200;
+const MIN_COLUMN_TILES = 4;
+
 interface Star {
   x: number;
   y: number;
@@ -89,10 +102,10 @@ const drawScene = (
   ctx.beginPath();
   ctx.rect(0, 0, width, horizon);
   ctx.clip();
-  const focal = Math.min(width, height) * 0.6;
+  const starFocal = Math.min(width, height) * 0.6;
   for (const star of scene.stars) {
-    const sx = cx + (star.x / star.z) * focal;
-    const sy = horizon * 0.55 + (star.y / star.z) * focal;
+    const sx = cx + (star.x / star.z) * starFocal;
+    const sy = horizon * 0.55 + (star.y / star.z) * starFocal;
     const size = Math.max(0.8, (1 - star.z) * 2.6);
     const alpha = Math.min(1, 0.25 + (1 - star.z) * 1.2);
     ctx.fillStyle = `hsl(${palette.glow + 40} 90% 85% / ${alpha * 0.8})`;
@@ -157,18 +170,38 @@ const drawScene = (
   ctx.fillStyle = floor;
   ctx.fillRect(0, horizon, width, height - horizon);
 
-  // Grid: horizontal lines approach the viewer, vertical lines converge
+  // Grid: square tiles on a flat floor, seen through a normal (not
+  // wide-angle) pinhole camera, so each tile keeps its shape as it
+  // approaches and only grows. The camera sits CAMERA_HEIGHT above the floor.
   const floorHeight = height - horizon;
+  const floorFocal = Math.max(width, height) * FOCAL_FACTOR;
+  const toScreenY = (depth: number) =>
+    horizon + (CAMERA_HEIGHT * floorFocal) / depth;
+  const toScreenX = (worldX: number, depth: number) =>
+    cx + (worldX * floorFocal) / depth;
   const lineColor = (alpha: number) =>
     `hsl(${palette.grid} 100% 62% / ${alpha * pulse})`;
-  const depthLines = 18;
-  for (let i = 0; i < depthLines; i += 1) {
-    const depth = i + 1 - scene.gridOffset;
-    if (depth <= 0) continue;
-    const y = horizon + floorHeight / depth ** 1.15;
-    if (y > height) continue;
+
+  // Depth of the floor at the bottom edge of the screen.
+  const nearDepth = (CAMERA_HEIGHT * floorFocal) / floorHeight;
+  const bottomSpan = (width * nearDepth) / floorFocal;
+  const cell = bottomSpan / ROW_TILES_ACROSS;
+  const columnTilesAcross = Math.max(
+    MIN_COLUMN_TILES,
+    Math.round(width / COLUMN_TILE_PX)
+  );
+  const columnCell = bottomSpan / columnTilesAcross;
+  // Stop once rows would be under ~1.5px apart; the horizon haze covers it.
+  const farDepth = Math.sqrt((CAMERA_HEIGHT * floorFocal * cell) / 1.5);
+
+  const firstRow = Math.ceil(nearDepth / cell);
+  const lastRow = Math.ceil(farDepth / cell) + 1;
+  for (let k = firstRow; k <= lastRow; k += 1) {
+    const depth = (k - scene.gridOffset) * cell;
+    if (depth < nearDepth * 0.98) continue;
+    const y = toScreenY(depth);
     const t = (y - horizon) / floorHeight;
-    ctx.fillStyle = lineColor(0.12 + t * 0.6);
+    ctx.fillStyle = lineColor(0.1 + t * 0.6);
     ctx.fillRect(0, y, width, Math.max(1, t * 2.5));
   }
 
@@ -177,12 +210,17 @@ const drawScene = (
   verticalGradient.addColorStop(1, lineColor(0.65));
   ctx.strokeStyle = verticalGradient;
   ctx.lineWidth = 1.5;
-  const spread = width * 0.11;
-  const columns = Math.ceil(width / spread) + 6;
+  // Lines beyond the bottom corners still enter through the side edges;
+  // keep drawing them until they would be under ~3px apart there.
+  const columns = Math.max(
+    Math.ceil(columnTilesAcross / 2) + 1,
+    Math.ceil(Math.sqrt((CAMERA_HEIGHT * (width / 2)) / (3 * columnCell)))
+  );
   ctx.beginPath();
   for (let j = -columns; j <= columns; j += 1) {
-    ctx.moveTo(cx + j * spread * 0.04, horizon);
-    ctx.lineTo(cx + j * spread * 1.6, height);
+    // Straight lines from the bottom edge to the vanishing point.
+    ctx.moveTo(toScreenX(j * columnCell, nearDepth), height);
+    ctx.lineTo(cx, horizon);
   }
   ctx.stroke();
 
