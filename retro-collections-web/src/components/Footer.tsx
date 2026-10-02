@@ -17,9 +17,13 @@ function Footer() {
   const relativeTime = getRelativeTimeString(buildDateObject);
 
   return (
-    <footer className="border-t border-base-300 bg-base-100 py-4 text-center text-sm text-base-content/60">
-      <p>
-        Build: {buildDate} ({relativeTime}) | Commit:{' '}
+    <footer className="border-t border-base-300 bg-base-100 px-4 py-2 text-center text-xs text-base-content/60 sm:py-4 sm:text-sm">
+      {/* One short line on phones; the full build details on wider screens. */}
+      <p className="truncate">
+        <span className="sm:hidden">Built {relativeTime} · </span>
+        <span className="hidden sm:inline">
+          Build: {buildDate} ({relativeTime}) | Commit:{' '}
+        </span>
         <code className="font-mono">{__GIT_HASH__}</code>
       </p>
     </footer>
