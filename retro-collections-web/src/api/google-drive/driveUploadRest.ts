@@ -18,12 +18,17 @@ export class DriveRequestError extends Error {
   }
 }
 
+// Generous enough for a full-resolution photo on a slow mobile connection,
+// but a connection left hanging by a frozen page fails and gets retried.
+const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+
 const driveFetch = async <T>(
   url: string,
   token: string,
   init: RequestInit = {}
 ): Promise<T> => {
   const response = await fetch(url, {
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ...init,
     headers: { Authorization: `Bearer ${token}`, ...init.headers },
   });

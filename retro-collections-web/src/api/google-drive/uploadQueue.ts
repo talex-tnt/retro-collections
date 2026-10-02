@@ -47,9 +47,58 @@ let windowListenersAttached = false;
 
 const emit = () => listeners.forEach((listener) => listener());
 
+/* ---------------- SCREEN WAKE LOCK ---------------- */
+
+// Keeps a phone from auto-locking (which freezes the page) while uploads run.
+// Browsers drop the lock when the page is hidden; it is re-requested on return.
+let wakeLock: WakeLockSentinel | null = null;
+let wakeLockPending = false;
+
+const hasActiveWork = () =>
+  Boolean(state.userId) &&
+  !state.authNeeded &&
+  state.jobs.some(
+    (job) => job.status === 'pending' || job.status === 'uploading'
+  );
+
+const syncWakeLock = () => {
+  if (!('wakeLock' in navigator)) return;
+
+  if (!hasActiveWork()) {
+    if (wakeLock) {
+      void wakeLock.release().catch(() => undefined);
+      wakeLock = null;
+    }
+    return;
+  }
+
+  if (wakeLock || wakeLockPending || document.visibilityState !== 'visible') {
+    return;
+  }
+
+  wakeLockPending = true;
+  navigator.wakeLock
+    .request('screen')
+    .then((sentinel) => {
+      wakeLock = sentinel;
+      sentinel.addEventListener('release', () => {
+        if (wakeLock === sentinel) wakeLock = null;
+      });
+      // Work may have finished while the request was pending.
+      syncWakeLock();
+    })
+    .catch(() => {
+      // Denied (e.g. battery saver); uploads still resume when visible.
+    })
+    .finally(() => {
+      wakeLockPending = false;
+    });
+};
+
 const setState = (patch: Partial<UploadQueueState>) => {
   state = { ...state, ...patch };
   emit();
+  syncWakeLock();
 };
 
 const updateJob = async (jobId: string, patch: Partial<UploadJob>) => {
@@ -194,6 +243,17 @@ const attachWindowListeners = () => {
   windowListenersAttached = true;
 
   window.addEventListener('online', kick);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    // Back from a locked screen or another app: retry now instead of waiting
+    // out a backoff that mostly accumulated while the page was frozen.
+    setState({
+      jobs: state.jobs.map((job) =>
+        job.status === 'pending' ? { ...job, nextAttemptAt: 0 } : job
+      ),
+    });
+    kick();
+  });
   window.addEventListener('beforeunload', (event) => {
     // Pending jobs resume on the next visit; only warn about live transfers.
     if (inFlight.size > 0) {
