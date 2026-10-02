@@ -18,7 +18,7 @@ export const AI_PROVIDER_PRESETS: AIProviderPreset[] = [
     id: 'gemini',
     type: 'gemini',
     label: 'Google Gemini',
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-3.8-flash',
     requiresKey: true,
     pricing: 'free tier',
     keyUrl: 'https://aistudio.google.com/apikey',
