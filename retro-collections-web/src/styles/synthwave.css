@@ -1,0 +1,90 @@
+/*
+ * Glass panels with a neon glow, active only while the animated background
+ * is on (SynthwaveBackground adds the `synthwave` class to <html> and sets
+ * --neon-hue to the current section's grid colour).
+ */
+
+@property --neon-hue {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 300;
+}
+
+html {
+  transition: --neon-hue 1.2s ease;
+}
+
+/* Outer panels: translucent, blurred, glowing edge. */
+html.synthwave
+  :is(
+    .card,
+    .modal-box,
+    .dropdown-content,
+    .rounded-box,
+    .rounded-lg,
+    .rounded-xl,
+    .rounded-2xl,
+    .collapse
+  ):is(.bg-base-100, .bg-base-200):not(
+    :is(
+        .card,
+        .modal-box,
+        .dropdown-content,
+        .rounded-box,
+        .rounded-lg,
+        .rounded-xl,
+        .rounded-2xl,
+        .collapse
+      ):is(.bg-base-100, .bg-base-200)
+      *
+  ) {
+  background-color: color-mix(in oklab, var(--color-base-100) 72%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  backdrop-filter: blur(10px) saturate(1.2);
+  box-shadow:
+    0 0 0 1px hsl(var(--neon-hue) 100% 65% / 0.3),
+    0 0 24px -6px hsl(var(--neon-hue) 100% 60% / 0.55),
+    0 12px 32px -14px rgb(0 0 0 / 0.7);
+  transition: box-shadow 0.3s ease;
+}
+
+/* Hovered cards glow a bit more. */
+html.synthwave .card:is(.bg-base-100, .bg-base-200):hover {
+  box-shadow:
+    0 0 0 1px hsl(var(--neon-hue) 100% 70% / 0.45),
+    0 0 32px -4px hsl(var(--neon-hue) 100% 62% / 0.7),
+    0 12px 32px -14px rgb(0 0 0 / 0.7);
+}
+
+/* Panels inside a glass panel: lighter tint only (no stacked blur or glow). */
+html.synthwave
+  :is(
+    .card,
+    .modal-box,
+    .dropdown-content,
+    .rounded-box,
+    .rounded-lg,
+    .rounded-xl,
+    .rounded-2xl,
+    .collapse
+  ):is(.bg-base-100, .bg-base-200)
+  :is(.bg-base-100, .bg-base-200) {
+  background-color: color-mix(in oklab, var(--color-base-100) 55%, transparent);
+}
+
+/*
+ * Mobile section picker in the header. The select's own utilities force
+ * "no shadow" with !important, so the glow goes on its wrapper instead.
+ */
+html.synthwave .header-nav-picker {
+  border-radius: var(--radius-field, 0.5rem);
+  box-shadow:
+    0 0 0 1px hsl(var(--neon-hue) 100% 65% / 0.35),
+    0 0 22px -6px hsl(var(--neon-hue) 100% 60% / 0.6);
+}
+
+html.synthwave .header-nav-picker > .select {
+  background-color: color-mix(in oklab, var(--color-base-100) 60%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  backdrop-filter: blur(10px) saturate(1.2);
+}

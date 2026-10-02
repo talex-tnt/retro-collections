@@ -57,7 +57,7 @@ function MyWishesBreadcrumb({
   return (
     <div
       ref={containerRef}
-      className="bg-base-200 p-4 pt-2 px-2 rounded-xl text-sm breadcrumbs overflow-visible"
+      className="mb-3 bg-base-200 p-4 pt-2 px-2 rounded-xl text-sm breadcrumbs overflow-visible"
     >
       <ul className="flex-wrap row-gap-1">
         <li className="whitespace-normal">

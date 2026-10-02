@@ -412,7 +412,7 @@ function Header() {
           </div>
 
           {/* Mobile: select dropdown navigation */}
-          <div className="relative w-full lg:hidden">
+          <div className="header-nav-picker relative w-full max-w-md lg:hidden">
             <select
               className="select w-full max-w-md font-qwigley header-nav-glow text-3xl leading-none !border-0 !shadow-none focus:!border-0 focus:!shadow-none focus-visible:!border-0 focus-visible:!shadow-none !outline-none focus:!outline-none focus-visible:!outline-none"
               value={(() => {

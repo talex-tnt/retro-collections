@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Qwigley&display=swap');
 @import './styles/focus-shadow.css';
+@import './styles/synthwave.css';
 @import 'tailwindcss';
 @plugin "daisyui";
 

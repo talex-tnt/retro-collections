@@ -21,6 +21,8 @@ import { useGoogleDriveAuth } from '../utils/hooks';
 import MyCollectiblesPage from '../pages/MyCollectiblesPage';
 import LoginWithGoogle from './LoginWithGoogle';
 import UploadQueueIndicator from './UploadQueueIndicator';
+import SynthwaveBackground from './SynthwaveBackground';
+import { useAnimatedBackground } from '../utils/backgroundPreference';
 import { uploadQueue } from '../api/google-drive/uploadQueue';
 import { useCurrentUser } from '../utils/hooks';
 
@@ -78,6 +80,10 @@ function App() {
       skip: !isAuthenticated || !isAuthorizedForMain || !isAuthResolved,
     });
 
+  const animatedBackground = useAnimatedBackground();
+  const shellBackground = animatedBackground
+    ? 'relative z-10 bg-transparent'
+    : 'bg-base-200';
   const currentUserId = currentUser?.uid;
   useEffect(() => {
     // Background Drive uploads are queued per user and resume after reloads.
@@ -224,7 +230,10 @@ function App() {
   if (!currentUser) {
     return (
       <HashRouter>
-        <div className="flex flex-col min-h-screen bg-base-200 text-base-content">
+        <SynthwaveBackground />
+        <div
+          className={`flex flex-col min-h-screen text-base-content ${shellBackground}`}
+        >
           <div className="flex-1">
             <div className="mx-auto max-w-screen-2xl space-y-4 px-2 sm:px-4 py-8">
               <Header />
@@ -244,7 +253,10 @@ function App() {
   console.log('Current user:', currentUser);
   return (
     <HashRouter>
-      <div className="flex flex-col min-h-screen bg-base-200 text-base-content">
+      <SynthwaveBackground />
+      <div
+        className={`flex flex-col min-h-screen text-base-content ${shellBackground}`}
+      >
         <div className="flex-1">
           <div className="mx-auto max-w-screen-2xl space-y-4 px-2 sm:px-4 py-8">
             <Header />
