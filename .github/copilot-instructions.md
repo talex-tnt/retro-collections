@@ -12,7 +12,8 @@ This file tracks implementation requirements and coding guidelines for the retro
 
 ## Project Overview
 - **Frontend**: retro-collections-web (React + TypeScript + Vite)
-- **Backend**: firebase-admin (Firebase/Firestore)
+- **Firebase**: firebase-admin (Firestore rules, rules tests, admin scripts)
+- **Backend**: retro-collections-backend (Vercel serverless functions)
 - **Stack**: React, TypeScript, Tailwind CSS, Firebase/Firestore
 
 ## Implementation Tasks
@@ -70,33 +71,38 @@ This file tracks implementation requirements and coding guidelines for the retro
 
 ## Firestore Architecture
 
-### User Types
-- **Admin**: Can read/write anywhere (config, test data, any data path)
-- **Common User**: Can read authenticated data, can only write to `/main/data/{folder}/{resourceType}/**` paths
+`firebase-admin/firestore.rules` and its test suites (`firebase-admin/tests/`) are the source of truth; keep this section in sync with them.
+
+### User Types (custom auth claims)
+- **Admin** (`admin == true`): full access to config and data in any environment it can enter; also `/test/testData/**`
+- **User** (`enabled == true`, no `tester` claim): can access `/main`
+- **Tester** (`enabled == true`, `tester == true`): can access `/test` (used by the rules test suites)
+- Users without `enabled` can only read their own `authorized-users` entry and access request
 
 ### Path Structure
 ```
-/main/config/{document=**}                  # Admin-only main configuration
-/main/config/public/runtime                 # Config metadata: {dataFolder: 'default'}
-/test/data/{document=**}                    # Admin-only test data
-/main/data/{folder}/                        # Common users cannot write here (requires resourceType)
-/main/data/{folder}/{resourceType}/docs/{docId}  # Common users can write here (only if folder matches dataFolder config)
+/{env}/config/public/runtime                          # {dataFolder: 'default'}; readable in env, admin-write
+/{env}/config/{document=**}                           # Admin-only
+/test/testData/{document=**}                          # Admin-only scratch area for tests
+/{env}/data/{folder}                                  # Admin-only folder doc
+/{env}/data/{folder}/private/authorized-users/{email} # Admin writes; owner of that email can read
+/{env}/data/{folder}/private/users-access-requests/{uid}  # Written by backend API; admin-managed
+/{env}/data/{folder}/public/users/{userId}            # Public profile (name, nickname, visibility)
+/{env}/data/{folder}/public/users/{userId}/{items|tags|collections|wishlists}/...
+/{env}/data/{folder}/public/users/{userId}/collections/{id}/items/{itemId}
+/{env}/data/{folder}/public/users/{userId}/wishlists/{id}/wishes/{wishId}
+/{env}/data/{folder}/public/nicknameIndex/{nickname}  # {userId}; enforces nickname uniqueness
+/{env}/data/{folder}/private/users/{userId}           # Private profile (email, lastLogin, ...)
+/{env}/data/{folder}/private/users/{userId}/settings/{wikipedia|rawg|ui}
+/{env}/data/{folder}/private/users/{userId}/{items|collections|wishlists}/...  # Private counterparts
+/{document=**}                                        # Everything else denied
 ```
 
 ### Database Hierarchy
-- `main` / `test`: Static top-level environments (main for production, test for testing)
-- `{folder}`: Configurable data folder from `/main/config/public/runtime.dataFolder` (currently 'default')
-- `{resourceType}`: Resource type like collections, items, users - users can only write to matched resourceType paths
-- `{docId}`: Individual document ID
-
-### Rules Structure
-- **Config rules** (`/main/config/**`): Admin-only read/write
-- **Test data rules** (`/test/data/**`): Admin-only read/write (for testing admin isolation)
-- **Direct folder write block** (`/main/data/{folder}/**`): Blocked for everyone - requires resourceType nesting
-- **Resource type rules** (`/main/data/{folder}/{resourceType}/**`): 
-  - Common users: can write only if `{folder}` matches `config.public/runtime.dataFolder`
-  - Admins: can write anywhere
-- **Future resource-specific rules**: Will validate each resourceType (collections, items, users) with field validation and ownership rules
+- `{env}`: `main` (production data) or `test` (rules test data); both exist in each Firebase project (dev/prod)
+- `{folder}`: must match `/{env}/config/public/runtime.dataFolder` (currently `default`) for any data access
+- `public` / `private`: public docs are readable by others only when `visibility.public == true`; private docs are owner + admin only
+- `{userId}`: per-user subtree; owners write their own docs, with field validation and server timestamps enforced by the rules
 
 ## Coding Guidelines
 - TypeScript for all new code
