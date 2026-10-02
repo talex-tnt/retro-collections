@@ -1,9 +1,10 @@
-import { useId, useState } from 'react';
+import { useState } from 'react';
 
 import {
   AI_PROVIDER_PRESETS,
   getPreset,
   listProviderModels,
+  type AIModelInfo,
   type AIProviderConfig,
   type AIProviderPresetId,
 } from '../api/ai';
@@ -11,6 +12,7 @@ import type { AIKeyStorage } from '../api/firestore/services/private/aiSettings'
 import { useAISettings } from '../hooks';
 import AIKeyStorageModal from './AIKeyStorageModal';
 
+const TYPE_MODEL_OPTION = '__type__';
 const AI_IMAGE_SIZE_OPTIONS = [512, 768, 1024, 1536, 2048];
 const DRIVE_IMAGE_SIZE_OPTIONS = [1600, 2048, 3072, 4096];
 
@@ -35,17 +37,35 @@ function ProviderRow({
   onMakeDefault,
 }: ProviderRowProps) {
   const preset = getPreset(provider.preset);
-  const modelListId = useId();
   const [model, setModel] = useState(provider.model);
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl ?? '');
   const [key, setKey] = useState(apiKey);
   const [showKey, setShowKey] = useState(false);
-  const [models, setModels] = useState<string[]>([]);
+  const [models, setModels] = useState<AIModelInfo[]>([]);
+  const [typeModel, setTypeModel] = useState(false);
   const [status, setStatus] = useState<{
     tone: 'success' | 'error' | 'info';
     text: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const modelIds = new Set(models.map((item) => item.id));
+  const modelGroups = models.some((item) => item.acceptsImages !== undefined)
+    ? [
+        {
+          label: 'Accept images',
+          models: models.filter((item) => item.acceptsImages === true),
+        },
+        {
+          label: 'Unknown',
+          models: models.filter((item) => item.acceptsImages === undefined),
+        },
+        {
+          label: "Text only (can't analyze photos)",
+          models: models.filter((item) => item.acceptsImages === false),
+        },
+      ]
+    : [{ label: 'Models', models }];
 
   const isDirty =
     model !== provider.model ||
@@ -81,9 +101,16 @@ function ProviderRow({
         apiKey: key.trim(),
       });
       setModels(found);
+      setTypeModel(false);
+      const withImages = found.filter((item) => item.acceptsImages).length;
+      const knowsImages = found.some(
+        (item) => item.acceptsImages !== undefined
+      );
       setStatus({
-        tone: 'success',
-        text: `Connected. ${found.length} models available; pick a vision-capable one.`,
+        tone: knowsImages && withImages === 0 ? 'error' : 'success',
+        text: knowsImages
+          ? `Connected. ${withImages} of ${found.length} models accept images; choose one, then Save.`
+          : `Connected. ${found.length} models loaded; choose one that accepts images, then Save.`,
       });
     } catch (error) {
       setStatus({
@@ -185,13 +212,46 @@ function ProviderRow({
       <label className="form-control w-full">
         <span className="label-text text-xs mb-1">Model</span>
         <div className="join w-full">
-          <input
-            className="input input-sm input-bordered join-item w-full"
-            list={modelListId}
-            value={model}
-            placeholder="Model id"
-            onChange={(event) => setModel(event.target.value)}
-          />
+          {models.length > 0 && !typeModel ? (
+            <select
+              className="select select-sm select-bordered join-item w-full"
+              value={modelIds.has(model) ? model : ''}
+              onChange={(event) => {
+                if (event.target.value === TYPE_MODEL_OPTION) {
+                  setTypeModel(true);
+                } else {
+                  setModel(event.target.value);
+                }
+              }}
+            >
+              <option value="" disabled>
+                {model ? `${model} (not in list)` : 'Choose a model'}
+              </option>
+              {modelGroups.map((group) =>
+                group.models.length === 0 ? null : (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.models.map((item) => (
+                      <option
+                        key={item.id}
+                        value={item.id}
+                        disabled={item.acceptsImages === false}
+                      >
+                        {item.id}
+                      </option>
+                    ))}
+                  </optgroup>
+                )
+              )}
+              <option value={TYPE_MODEL_OPTION}>Type a model name…</option>
+            </select>
+          ) : (
+            <input
+              className="input input-sm input-bordered join-item w-full"
+              value={model}
+              placeholder="Model id"
+              onChange={(event) => setModel(event.target.value)}
+            />
+          )}
           <button
             type="button"
             className="btn btn-sm join-item"
@@ -201,11 +261,6 @@ function ProviderRow({
             Test &amp; load models
           </button>
         </div>
-        <datalist id={modelListId}>
-          {models.map((id) => (
-            <option key={id} value={id} />
-          ))}
-        </datalist>
       </label>
 
       <div className="flex items-center justify-between gap-2">

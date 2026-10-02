@@ -6,7 +6,6 @@ export type AIProviderPresetId =
   | 'groq'
   | 'openrouter'
   | 'mistral'
-  | 'github'
   | 'ollama'
   | 'anthropic'
   | 'custom';
@@ -41,6 +40,12 @@ export interface AIAnalysisResult {
   tags: string[];
 }
 
+export interface AIModelInfo {
+  id: string;
+  /** Whether the model accepts images; undefined when the provider doesn't say. */
+  acceptsImages?: boolean;
+}
+
 export interface AIRequest {
   config: AIProviderConfig;
   apiKey: string;
@@ -52,7 +57,7 @@ export interface AIProviderAdapter {
     request: AIRequest,
     input: AIAnalysisInput
   ): Promise<AIAnalysisResult>;
-  listModels(request: AIRequest): Promise<string[]>;
+  listModels(request: AIRequest): Promise<AIModelInfo[]>;
 }
 
 export class AIProviderError extends Error {

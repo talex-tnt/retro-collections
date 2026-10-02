@@ -107,8 +107,8 @@ const geminiProvider: AIProviderAdapter = {
       .filter((model) =>
         model.supportedGenerationMethods?.includes('generateContent')
       )
-      .map((model) => normalizeModel(model.name))
-      .sort();
+      .map((model) => ({ id: normalizeModel(model.name) }))
+      .sort((a, b) => a.id.localeCompare(b.id));
   },
 };
 

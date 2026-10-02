@@ -17,7 +17,14 @@ type ChatCompletionResponse = {
   }>;
 };
 
-type ModelsResponse = { data?: Array<{ id: string }> };
+type ModelsResponse = {
+  data?: Array<{
+    id: string;
+    // Groq reports modalities at the top level, OpenRouter under architecture.
+    input_modalities?: string[];
+    architecture?: { input_modalities?: string[] };
+  }>;
+};
 
 const getBaseUrl = (config: AIProviderConfig) => {
   const baseUrl = config.baseUrl?.trim().replace(/\/+$/, '');
@@ -145,7 +152,16 @@ const openaiCompatibleProvider: AIProviderAdapter = {
       apiKey,
       { signal }
     );
-    return (data.data ?? []).map((model) => model.id).sort();
+    return (data.data ?? [])
+      .map((model) => {
+        const modalities =
+          model.input_modalities ?? model.architecture?.input_modalities;
+        return {
+          id: model.id,
+          acceptsImages: modalities ? modalities.includes('image') : undefined,
+        };
+      })
+      .sort((a, b) => a.id.localeCompare(b.id));
   },
 };
 

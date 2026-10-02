@@ -102,11 +102,14 @@ const anthropicProvider: AIProviderAdapter = {
   async listModels({ apiKey, signal }) {
     const client = createClient(apiKey);
     try {
-      const ids: string[] = [];
+      const models = [];
       for await (const model of client.models.list({}, { signal })) {
-        ids.push(model.id);
+        models.push({
+          id: model.id,
+          acceptsImages: model.capabilities?.image_input?.supported,
+        });
       }
-      return ids;
+      return models;
     } catch (error) {
       return toProviderError(error);
     }
