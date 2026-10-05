@@ -1,4 +1,10 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import {
   animate,
   motion,
@@ -66,6 +72,27 @@ export default function SwipeNav({
   const draggedRef = useRef(false);
   const animatingToRef = useRef<number | null>(null);
   const shownIndexRef = useRef<number | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Close the section menu on an outside tap or Escape.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handlePointer = (event: PointerEvent) => {
+      if (!wrapperRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointer);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointer);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [menuOpen]);
 
   const index = Math.max(
     0,
@@ -145,15 +172,34 @@ export default function SwipeNav({
   const handleDragEnd = (_event: unknown, info: PanInfo) => {
     const current = layoutRef.current;
     if (current) {
-      // Positive when dragged left, i.e. towards the next section.
-      const moved = targetFor(index, current) - x.get();
-      const share = moved / current.step;
-      if (share > SWIPE_THRESHOLD || info.velocity.x < -FLICK_VELOCITY) {
-        goTo(index + 1);
-      } else if (share < -SWIPE_THRESHOLD || info.velocity.x > FLICK_VELOCITY) {
-        goTo(index - 1);
+      // The name closest to the middle when the finger lifts wins, so a long
+      // drag can skip several sections.
+      const middle = current.width / 2 - x.get();
+      const nearest = current.centers.reduce(
+        (best, center, i) =>
+          Math.abs(center - middle) < Math.abs(current.centers[best] - middle)
+            ? i
+            : best,
+        index
+      );
+
+      if (nearest !== index) {
+        goTo(nearest);
       } else {
-        goTo(index);
+        // Still nearest to where it started: a short drag past the
+        // threshold, or a flick, moves one section; otherwise spring back.
+        const moved = targetFor(index, current) - x.get();
+        const share = moved / current.step;
+        if (share > SWIPE_THRESHOLD || info.velocity.x < -FLICK_VELOCITY) {
+          goTo(index + 1);
+        } else if (
+          share < -SWIPE_THRESHOLD ||
+          info.velocity.x > FLICK_VELOCITY
+        ) {
+          goTo(index - 1);
+        } else {
+          goTo(index);
+        }
       }
     }
     // The pointerup that ends a drag also fires a click; ignore that one.
@@ -170,55 +216,92 @@ export default function SwipeNav({
     : { left: 0, right: 0 };
 
   return (
-    <nav
-      ref={containerRef}
-      aria-label="Sections"
-      className={`relative overflow-hidden select-none ${className}`}
-    >
-      {/* Fade the edges so neighbouring sections read as "peeking"; the
-          mask sits on this layer so the bar's own background and glow stay. */}
-      <div
-        className="absolute inset-0"
-        style={{
-          maskImage: EDGE_FADE,
-          WebkitMaskImage: EDGE_FADE,
-          // Hidden until measured, so nothing flashes in the wrong place.
-          visibility: layout ? 'visible' : 'hidden',
-        }}
+    <div ref={wrapperRef} className={`relative z-40 ${className}`}>
+      <nav
+        ref={containerRef}
+        aria-label="Sections"
+        className="relative h-full w-full overflow-hidden rounded-[inherit] select-none"
       >
-        <motion.div
-          className={`absolute inset-y-0 left-0 flex items-center touch-pan-y whitespace-nowrap ${labelClassName}`}
-          style={{ x, columnGap: gap }}
-          drag="x"
-          dragConstraints={dragBounds}
-          dragElastic={0.2}
-          dragMomentum={false}
-          onDragStart={() => {
-            draggedRef.current = true;
+        {/* Fade the edges so neighbouring sections read as "peeking"; the
+          mask sits on this layer so the bar's own background and glow stay. */}
+        <div
+          className="absolute inset-0"
+          style={{
+            maskImage: EDGE_FADE,
+            WebkitMaskImage: EDGE_FADE,
+            // Hidden until measured, so nothing flashes in the wrong place.
+            visibility: layout ? 'visible' : 'hidden',
           }}
-          onDragEnd={handleDragEnd}
+        >
+          <motion.div
+            className={`absolute inset-y-0 left-0 flex items-center touch-pan-y whitespace-nowrap ${labelClassName}`}
+            style={{ x, columnGap: gap }}
+            drag="x"
+            dragConstraints={dragBounds}
+            dragElastic={0.2}
+            dragMomentum={false}
+            onDragStart={() => {
+              draggedRef.current = true;
+              setMenuOpen(false);
+            }}
+            onDragEnd={handleDragEnd}
+          >
+            {items.map((item, i) => (
+              <StripLabel
+                key={item.value}
+                elementRef={(element) => {
+                  itemRefs.current[i] = element;
+                }}
+                item={item}
+                itemIndex={i}
+                isCurrent={i === index}
+                x={x}
+                layoutRef={layoutRef}
+                menuOpen={menuOpen}
+                onSelect={() => {
+                  // A drag also ends with a click; only real taps count.
+                  if (draggedRef.current) return;
+                  if (i === index) setMenuOpen((open) => !open);
+                  else goTo(i);
+                }}
+              />
+            ))}
+          </motion.div>
+        </div>
+      </nav>
+
+      {/* Full section list, opened by tapping the current name. A custom menu
+        rather than a native <select>, which would swallow swipes that start
+        on the name. The wrapper's z-40 keeps it above the page content: the
+        glass effect makes the wrapper its own stacking layer. */}
+      {menuOpen && (
+        <ul
+          role="listbox"
+          aria-label="Sections"
+          className="dropdown-content menu rounded-box bg-base-100 absolute inset-x-0 top-full z-50 mt-2 w-full p-2 shadow-xl"
+          // Solid: the bar's glass blur can't extend to a menu nested inside
+          // it, so a see-through menu would show the page text behind it.
+          style={{ backgroundColor: 'var(--color-base-100)' }}
         >
           {items.map((item, i) => (
-            <StripLabel
-              key={item.value}
-              elementRef={(element) => {
-                itemRefs.current[i] = element;
-              }}
-              item={item}
-              itemIndex={i}
-              isCurrent={i === index}
-              x={x}
-              layoutRef={layoutRef}
-              items={items}
-              onSelect={() => {
-                if (!draggedRef.current) goTo(i);
-              }}
-              onChoose={onChange}
-            />
+            <li key={item.value}>
+              <button
+                type="button"
+                role="option"
+                aria-selected={i === index}
+                className={i === index ? 'menu-active' : undefined}
+                onClick={() => {
+                  setMenuOpen(false);
+                  if (i !== index) goTo(i);
+                }}
+              >
+                {item.label}
+              </button>
+            </li>
           ))}
-        </motion.div>
-      </div>
-    </nav>
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -232,9 +315,8 @@ interface StripLabelProps {
   isCurrent: boolean;
   x: MotionValue<number>;
   layoutRef: React.RefObject<Layout | null>;
-  items: SwipeNavItem[];
+  menuOpen: boolean;
   onSelect: () => void;
-  onChoose: (value: string) => void;
 }
 
 /**
@@ -249,9 +331,8 @@ function StripLabel({
   isCurrent,
   x,
   layoutRef,
-  items,
+  menuOpen,
   onSelect,
-  onChoose,
 }: StripLabelProps) {
   const closeness = (offset: number) => {
     const layout = layoutRef.current;
@@ -275,11 +356,15 @@ function StripLabel({
   return (
     <motion.span
       ref={elementRef}
-      role={isCurrent ? undefined : 'button'}
-      aria-label={isCurrent ? undefined : `Go to ${item.label}`}
-      className="relative inline-flex items-center gap-1.5"
+      role="button"
+      aria-label={
+        isCurrent ? `${item.label}: choose a section` : `Go to ${item.label}`
+      }
+      aria-haspopup={isCurrent ? 'listbox' : undefined}
+      aria-expanded={isCurrent ? menuOpen : undefined}
+      className="relative inline-flex cursor-pointer items-center gap-1.5"
       style={{ opacity, scale }}
-      onClick={isCurrent ? undefined : onSelect}
+      onClick={onSelect}
     >
       <span>{item.label}</span>
       <span
@@ -288,22 +373,6 @@ function StripLabel({
       >
         ▾
       </span>
-      {isCurrent && (
-        // Invisible native select on top of the name: a tap opens the full
-        // list, a horizontal drag still moves the strip.
-        <select
-          aria-label="Choose a section"
-          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-          value={item.value}
-          onChange={(event) => onChoose(event.target.value)}
-        >
-          {items.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      )}
     </motion.span>
   );
 }
