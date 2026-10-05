@@ -38,6 +38,8 @@ function MyListItem({
     'name' | 'description' | null
   >(null);
   const [editValue, setEditValue] = useState('');
+  // Value when editing started, to skip saving when nothing changed.
+  const [originalValue, setOriginalValue] = useState('');
   const [editing, setEditing] = useState(false);
   const [updateItem] = useUpdateUserItemMutation();
   const [deleteItem] = useDeleteUserItemMutation();
@@ -62,11 +64,20 @@ function MyListItem({
   ) => {
     setEditingField(field);
     setEditValue(currentValue);
+    setOriginalValue(currentValue);
     setEditing(true);
   };
 
   const saveEdit = async () => {
     if (!editingField) return;
+    // Opening a field and closing it untouched isn't an edit: don't write
+    // (which would also bump the item's last-updated time).
+    if (editValue.trim() === originalValue.trim()) {
+      setEditing(false);
+      setEditingField(null);
+      setEditValue('');
+      return;
+    }
     const updates =
       editingField === 'name'
         ? { name: editValue.trim() }
