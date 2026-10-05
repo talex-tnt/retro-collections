@@ -72,19 +72,12 @@ html.synthwave
   background-color: color-mix(in oklab, var(--color-base-100) 55%, transparent);
 }
 
-/*
- * Mobile section picker in the header. The select's own utilities force
- * "no shadow" with !important, so the glow goes on its wrapper instead.
- */
+/* Mobile section switcher in the header (SwipeNav). */
 html.synthwave .header-nav-picker {
-  border-radius: var(--radius-field, 0.5rem);
-  box-shadow:
-    0 0 0 1px hsl(var(--neon-hue) 100% 65% / 0.35),
-    0 0 22px -6px hsl(var(--neon-hue) 100% 60% / 0.6);
-}
-
-html.synthwave .header-nav-picker > .select {
   background-color: color-mix(in oklab, var(--color-base-100) 60%, transparent);
   -webkit-backdrop-filter: blur(10px) saturate(1.2);
   backdrop-filter: blur(10px) saturate(1.2);
+  box-shadow:
+    0 0 0 1px hsl(var(--neon-hue) 100% 65% / 0.35),
+    0 0 22px -6px hsl(var(--neon-hue) 100% 60% / 0.6);
 }

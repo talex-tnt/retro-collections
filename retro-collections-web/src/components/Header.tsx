@@ -12,6 +12,7 @@ import LoginWithGoogle from './LoginWithGoogle';
 import { useDispatch } from 'react-redux';
 import { clearAuth } from '../store/authSlice';
 import retroCollectionsLogo from '../assets/retro-collections-logo.png';
+import SwipeNav, { type SwipeNavItem } from './SwipeNav';
 
 function UserMenu({
   user,
@@ -143,6 +144,24 @@ function Header() {
   const [existingAccessRequest, setExistingAccessRequest] =
     useState<ExistingAccessRequest | null>(null);
   const isAdmin = useIsAdmin(user);
+
+  const mobileNavItems: SwipeNavItem[] = [
+    { value: '/my-collectibles', label: 'My Collectibles' },
+    { value: '/my-collections', label: 'My Collections' },
+    { value: '/my-wishlists', label: 'My Wishlists' },
+    { value: '/collectors', label: 'Collectors' },
+    { value: '/tags', label: 'Tags' },
+    { value: '/settings', label: 'Settings' },
+    ...(isAdmin
+      ? [
+          { value: '/users', label: 'Users' },
+          { value: '/admin', label: 'Admin' },
+        ]
+      : []),
+  ];
+  const currentMobileNavValue =
+    mobileNavItems.find((item) => location.pathname.startsWith(item.value))
+      ?.value ?? '/my-collections';
 
   const [requestUserAccess, { isLoading: isRequestingAccess }] =
     useRequestUserAccessMutation();
@@ -411,40 +430,14 @@ function Header() {
             </div>
           </div>
 
-          {/* Mobile: select dropdown navigation */}
-          <div className="header-nav-picker relative w-full max-w-md lg:hidden">
-            <select
-              className="select w-full max-w-md font-qwigley header-nav-glow text-3xl leading-none !border-0 !shadow-none focus:!border-0 focus:!shadow-none focus-visible:!border-0 focus-visible:!shadow-none !outline-none focus:!outline-none focus-visible:!outline-none"
-              value={(() => {
-                if (location.pathname.startsWith('/my-collectibles'))
-                  return '/my-collectibles';
-                if (location.pathname.startsWith('/my-collections'))
-                  return '/my-collections';
-                if (location.pathname.startsWith('/my-wishlists'))
-                  return '/my-wishlists';
-                if (location.pathname.startsWith('/tags')) return '/tags';
-                if (location.pathname.startsWith('/collectors'))
-                  return '/collectors';
-                if (location.pathname.startsWith('/settings'))
-                  return '/settings';
-                if (isAdmin && location.pathname.startsWith('/users'))
-                  return '/users';
-                if (isAdmin && location.pathname.startsWith('/admin'))
-                  return '/admin';
-                return '/my-collections';
-              })()}
-              onChange={(e) => navigate(e.target.value)}
-            >
-              <option value="/my-collectibles">My Collectibles</option>
-              <option value="/my-collections">My Collections</option>
-              <option value="/my-wishlists">My Wishlists</option>
-              <option value="/collectors">Collectors</option>
-              <option value="/tags">Tags</option>
-              <option value="/settings">Settings</option>
-              {isAdmin && <option value="/users">Users</option>}
-              {isAdmin && <option value="/admin">Admin</option>}
-            </select>
-          </div>
+          {/* Mobile: swipeable section switcher (tap the name for the list) */}
+          <SwipeNav
+            className="header-nav-picker w-full max-w-md h-12 lg:hidden rounded-field bg-base-100"
+            labelClassName="font-qwigley header-nav-glow text-3xl leading-none"
+            items={mobileNavItems}
+            value={currentMobileNavValue}
+            onChange={(value) => navigate(value)}
+          />
 
           {/* Desktop: tab navigation */}
           <nav className="tabs tabs-boxed flex-wrap gap-2 hidden lg:flex">
