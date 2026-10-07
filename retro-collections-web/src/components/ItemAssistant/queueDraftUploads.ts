@@ -140,5 +140,5 @@ export const queueDraftUploads = async ({
 
   await uploadQueue.enqueue([folderJob, ...fileJobs]);
 
-  return { folder: { id: folderDriveId, name: folderName }, preview };
+  return { folder: { id: folderDriveId, name: folderName }, preview, batchId };
 };

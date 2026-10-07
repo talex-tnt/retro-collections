@@ -7,6 +7,7 @@ import {
   getDraftPhotos,
   putDraftPhoto,
   saveDraft,
+  type AppliedDraft,
   type ItemDraft,
 } from '../../utils/assistantDb';
 import { stripImageMetadata } from '../../utils/imageEditing';
@@ -55,6 +56,14 @@ export const useItemDraft = () => {
   const [draft, setDraft] = useState<ItemDraft | null>(null);
   const [photos, setPhotos] = useState<DraftPhotoView[]>([]);
   const photosRef = useRef<DraftPhotoView[]>([]);
+  // The draft that is open right now. A delayed autosave only writes if its
+  // snapshot is still the open draft, so it can't overwrite an applied draft
+  // or bring back one that was just discarded.
+  const openDraftRef = useRef<ItemDraft | null>(null);
+
+  useEffect(() => {
+    openDraftRef.current = draft;
+  }, [draft]);
 
   useEffect(() => {
     photosRef.current = photos;
@@ -62,10 +71,9 @@ export const useItemDraft = () => {
 
   useEffect(() => {
     if (!draft || isDraftEmpty(draft)) return;
-    const timeoutId = window.setTimeout(
-      () => void saveDraft(draft),
-      AUTOSAVE_DELAY_MS
-    );
+    const timeoutId = window.setTimeout(() => {
+      if (openDraftRef.current === draft) void saveDraft(draft);
+    }, AUTOSAVE_DELAY_MS);
     return () => window.clearTimeout(timeoutId);
   }, [draft]);
 
@@ -126,6 +134,7 @@ export const useItemDraft = () => {
 
   /** Saves pending changes, or removes the draft if nothing was entered. */
   const close = useCallback(async () => {
+    openDraftRef.current = null;
     if (draft) {
       if (isDraftEmpty(draft)) {
         await deleteDraft(draft.id);
@@ -138,6 +147,7 @@ export const useItemDraft = () => {
   }, [draft, releasePhotos]);
 
   const discard = useCallback(async () => {
+    openDraftRef.current = null;
     if (draft) await deleteDraft(draft.id);
     releasePhotos();
     setDraft(null);
@@ -300,6 +310,22 @@ export const useItemDraft = () => {
     [update]
   );
 
+  /**
+   * Records that the draft was applied to the form, saves it and closes it.
+   * Done in one step: a separate close() would save the previous snapshot
+   * and drop the applied marker.
+   */
+  const markAppliedAndClose = useCallback(
+    async (applied: AppliedDraft) => {
+      if (!draft) return;
+      openDraftRef.current = null;
+      await saveDraft({ ...draft, applied, updatedAt: Date.now() });
+      releasePhotos();
+      setDraft(null);
+    },
+    [draft, releasePhotos]
+  );
+
   const setApply = useCallback(
     (patch: Partial<ItemDraft['apply']>) =>
       update((prev) => ({ apply: { ...prev.apply, ...patch } })),
@@ -325,5 +351,6 @@ export const useItemDraft = () => {
     editResult,
     clearResult,
     setApply,
+    markAppliedAndClose,
   };
 };

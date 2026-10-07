@@ -70,6 +70,11 @@ export default function DraftList({
                 <p className="font-medium text-sm truncate">
                   {draft.result?.title || draft.folderName || 'Untitled item'}
                 </p>
+                {draft.applied && (
+                  <span className="badge badge-info badge-xs">
+                    applied · not saved yet
+                  </span>
+                )}
                 <p className="text-xs opacity-60">
                   {draft.photoIds.length} photo
                   {draft.photoIds.length === 1 ? '' : 's'} ·{' '}

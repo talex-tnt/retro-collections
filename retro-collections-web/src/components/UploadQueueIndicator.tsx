@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { uploadQueue, useUploadQueue } from '../api/google-drive/uploadQueue';
 import type { UploadJob } from '../utils/assistantDb';
@@ -9,8 +9,8 @@ interface BatchSummary {
   total: number;
   done: number;
   failed: number;
-  uploading: boolean;
-  error?: string;
+  complete: boolean;
+  jobs: UploadJob[];
 }
 
 const summarize = (jobs: UploadJob[]): BatchSummary[] => {
@@ -21,28 +21,86 @@ const summarize = (jobs: UploadJob[]): BatchSummary[] => {
 
   return [...batches.entries()].map(([batchId, batchJobs]) => {
     const files = batchJobs.filter((job) => job.kind === 'file');
-    const failedJobs = batchJobs.filter((job) => job.status === 'error');
     return {
       batchId,
       label: batchJobs[0].batchLabel,
       total: files.length,
       done: files.filter((job) => job.status === 'done').length,
-      failed: failedJobs.length,
-      uploading: batchJobs.some((job) => job.status === 'uploading'),
-      error: failedJobs[0]?.error,
+      failed: batchJobs.filter((job) => job.status === 'error').length,
+      complete: batchJobs.every((job) => job.status === 'done'),
+      jobs: batchJobs,
     };
   });
 };
 
-const isBatchComplete = (batch: BatchSummary, jobs: UploadJob[]) =>
-  jobs
-    .filter((job) => job.batchId === batch.batchId)
-    .every((job) => job.status === 'done');
+/** One line explaining what a batch is doing (or why it isn't). */
+const describeBatch = (
+  batch: BatchSummary,
+  authNeeded: boolean,
+  now: number
+): { text: string; tone: 'muted' | 'warning' | 'error' | 'success' } => {
+  if (batch.complete) return { text: 'Uploaded', tone: 'success' };
+
+  const failedJob = batch.jobs.find((job) => job.status === 'error');
+  if (failedJob) {
+    return { text: failedJob.error || 'Upload failed.', tone: 'error' };
+  }
+  if (authNeeded) {
+    return { text: 'Waiting for Google Drive sign-in', tone: 'warning' };
+  }
+
+  const folder = batch.jobs.find((job) => job.kind === 'folder');
+  if (batch.jobs.some((job) => job.status === 'uploading')) {
+    return {
+      text:
+        folder?.status === 'uploading'
+          ? 'Creating the folder…'
+          : 'Uploading photos…',
+      tone: 'muted',
+    };
+  }
+
+  const waiting = batch.jobs
+    .filter((job) => job.status === 'pending' && job.nextAttemptAt > now)
+    .sort((a, b) => a.nextAttemptAt - b.nextAttemptAt)[0];
+  if (waiting) {
+    const seconds = Math.max(
+      1,
+      Math.ceil((waiting.nextAttemptAt - now) / 1000)
+    );
+    return {
+      text: `Retrying in ${seconds}s (attempt ${waiting.attempts + 1})${
+        waiting.error ? `: ${waiting.error}` : ''
+      }`,
+      tone: 'warning',
+    };
+  }
+
+  if (folder && folder.status !== 'done') {
+    return { text: 'Waiting to create the folder', tone: 'muted' };
+  }
+  return { text: 'Queued', tone: 'muted' };
+};
+
+const TONE_CLASS = {
+  muted: 'opacity-70',
+  warning: 'text-warning',
+  error: 'text-error',
+  success: 'text-success',
+};
 
 export default function UploadQueueIndicator() {
-  const { jobs, authNeeded } = useUploadQueue();
+  const { jobs, authNeeded, authMessage } = useUploadQueue();
   const [expanded, setExpanded] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  // Tick while open so "retrying in Ns" counts down.
+  useEffect(() => {
+    if (!expanded) return;
+    const intervalId = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [expanded]);
 
   if (jobs.length === 0) return null;
 
@@ -50,7 +108,7 @@ export default function UploadQueueIndicator() {
   const totalFiles = batches.reduce((sum, batch) => sum + batch.total, 0);
   const doneFiles = batches.reduce((sum, batch) => sum + batch.done, 0);
   const failed = batches.reduce((sum, batch) => sum + batch.failed, 0);
-  const allComplete = batches.every((batch) => isBatchComplete(batch, jobs));
+  const allComplete = batches.every((batch) => batch.complete);
 
   let summary: string;
   let tone: string;
@@ -69,36 +127,49 @@ export default function UploadQueueIndicator() {
   }
 
   const handleAuthorize = async () => {
-    setAuthError(null);
+    setSigningIn(true);
     try {
       await uploadQueue.authorize();
-    } catch (error) {
-      setAuthError(String((error as Error)?.message ?? error));
+    } catch {
+      // The queue records the reason in authMessage, shown below.
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const handleCancel = (batch: BatchSummary) => {
+    if (
+      window.confirm(
+        `Stop uploading "${batch.label}"? Photos that haven't reached Drive yet won't be uploaded. If you haven't saved the item yet, its draft (with the photos) is still in the AI assistant.`
+      )
+    ) {
+      void uploadQueue.discardBatch(batch.batchId);
     }
   };
 
   return (
     <div className="fixed bottom-4 right-4 z-[9000] flex flex-col items-end gap-2 max-w-[calc(100vw-2rem)]">
       {expanded && (
-        <div className="w-80 max-w-full max-h-80 overflow-y-auto rounded-xl border border-base-300 bg-base-100 p-3 shadow-xl space-y-2 text-xs">
+        <div className="w-80 max-w-full max-h-96 overflow-y-auto rounded-xl border border-base-300 bg-base-100 p-3 shadow-xl space-y-2 text-xs">
           {authNeeded && (
             <div className="space-y-1">
               <p>
-                Your Google Drive session expired. Queued photos are kept and
-                upload once you sign in again.
+                {authMessage ??
+                  'Sign in to Google Drive to continue the uploads.'}{' '}
+                Queued photos are kept until then.
               </p>
               <button
                 type="button"
                 className="btn btn-xs btn-warning"
                 onClick={handleAuthorize}
+                disabled={signingIn}
               >
-                Sign in to Drive
+                {signingIn ? 'Signing in…' : 'Sign in to Drive'}
               </button>
-              {authError && <p className="text-error">{authError}</p>}
             </div>
           )}
           {batches.map((batch) => {
-            const complete = isBatchComplete(batch, jobs);
+            const status = describeBatch(batch, authNeeded, now);
             return (
               <div
                 key={batch.batchId}
@@ -114,46 +185,42 @@ export default function UploadQueueIndicator() {
                   className={`progress w-full ${
                     batch.failed > 0
                       ? 'progress-error'
-                      : complete
+                      : batch.complete
                         ? 'progress-success'
                         : 'progress-primary'
                   }`}
                   value={batch.done}
                   max={Math.max(batch.total, 1)}
                 />
-                {batch.error && (
-                  <p className="text-error break-words">{batch.error}</p>
-                )}
-                {batch.failed > 0 && (
+                <p className={`break-words ${TONE_CLASS[status.tone]}`}>
+                  {status.text}
+                </p>
+                {!batch.complete && (
                   <div className="flex gap-1">
                     <button
                       type="button"
                       className="btn btn-xs"
                       onClick={() => void uploadQueue.retryBatch(batch.batchId)}
+                      disabled={authNeeded}
+                      title={
+                        authNeeded ? 'Sign in to Drive first' : 'Retry now'
+                      }
                     >
-                      Retry
+                      Retry now
                     </button>
                     <button
                       type="button"
                       className="btn btn-xs btn-ghost text-error"
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            `Stop uploading "${batch.label}"? Photos not yet uploaded will be lost.`
-                          )
-                        ) {
-                          void uploadQueue.discardBatch(batch.batchId);
-                        }
-                      }}
+                      onClick={() => handleCancel(batch)}
                     >
-                      Discard
+                      Cancel upload
                     </button>
                   </div>
                 )}
               </div>
             );
           })}
-          {batches.some((batch) => isBatchComplete(batch, jobs)) && (
+          {batches.some((batch) => batch.complete) && (
             <button
               type="button"
               className="btn btn-xs btn-ghost w-full"
@@ -168,7 +235,10 @@ export default function UploadQueueIndicator() {
       <button
         type="button"
         className={`btn btn-sm shadow-lg gap-2 ${tone}`}
-        onClick={() => setExpanded((prev) => !prev)}
+        onClick={() => {
+          setNow(Date.now());
+          setExpanded((prev) => !prev);
+        }}
         aria-expanded={expanded}
       >
         {!allComplete && !authNeeded && failed === 0 && (

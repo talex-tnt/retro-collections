@@ -8,10 +8,14 @@ import {
   getDriveWriteToken,
   requestDriveWriteToken,
 } from '../../api/google-drive/googleDriveAuthWrite';
+import { driveFileExists } from '../../api/google-drive/driveUploadRest';
+import { uploadQueue } from '../../api/google-drive/uploadQueue';
 import { useAISettings } from '../../hooks';
 import {
   deleteDraft,
   listDrafts,
+  onDraftsChanged,
+  type AppliedDraft,
   type ItemDraft,
 } from '../../utils/assistantDb';
 import { useCurrentUser } from '../../utils/hooks';
@@ -37,6 +41,8 @@ export interface ItemAssistantResult {
   tags?: string[];
   uploadedFolderId?: { id: string; name: string };
   fallbackPreview?: { id: string; name: string };
+  /** The draft stays until the item is saved; the form deletes it then. */
+  draftId?: string;
 }
 
 interface ItemAssistantProps {
@@ -72,9 +78,12 @@ export function ItemAssistant({
   const [siblingFolderNames, setSiblingFolderNames] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Keep the draft count fresh, e.g. when saving the item deletes its draft.
   useEffect(() => {
     if (!userId) return;
-    void listDrafts(userId).then(setDrafts);
+    const refresh = () => void listDrafts(userId).then(setDrafts);
+    refresh();
+    return onDraftsChanged(refresh);
   }, [userId]);
 
   const refreshDrafts = async () => setDrafts(await listDrafts(userId));
@@ -226,7 +235,7 @@ export function ItemAssistant({
     setIsApplying(true);
     try {
       const result = draft.result;
-      const payload: ItemAssistantResult = {};
+      const payload: ItemAssistantResult = { draftId: draft.id };
       if (result && draft.apply.title && result.title) {
         payload.title = result.title;
       }
@@ -237,24 +246,53 @@ export function ItemAssistant({
         payload.tags = result.tags;
       }
 
+      let applied: AppliedDraft = {
+        appliedAt: Date.now(),
+        batchId: null,
+        folder: null,
+        preview: null,
+      };
+
       if (willUpload) {
         // Ask for the token first: the Google popup needs this click.
         const token = getDriveWriteToken() ?? (await requestDriveWriteToken());
-        const { folder, preview } = await queueDraftUploads({
-          token,
-          userId,
-          draft,
-          photos,
-          settings,
-        });
-        payload.uploadedFolderId = folder;
-        if (preview) payload.fallbackPreview = preview;
+        const previous = draft.applied;
+
+        // Applied before (e.g. the page reloaded before the item was saved):
+        // reuse those uploads while they're queued or already in Drive, so
+        // the photos aren't uploaded twice.
+        const reusable =
+          previous?.folder &&
+          ((previous.batchId && uploadQueue.hasBatch(previous.batchId)) ||
+            (await driveFileExists(token, previous.folder.id).catch(
+              () => false
+            )));
+
+        if (reusable && previous) {
+          applied = { ...previous, appliedAt: Date.now() };
+        } else {
+          const queued = await queueDraftUploads({
+            token,
+            userId,
+            draft,
+            photos,
+            settings,
+          });
+          applied = {
+            appliedAt: Date.now(),
+            batchId: queued.batchId,
+            folder: queued.folder,
+            preview: queued.preview,
+          };
+        }
+        if (applied.folder) payload.uploadedFolderId = applied.folder;
+        if (applied.preview) payload.fallbackPreview = applied.preview;
       }
 
       onApply(payload);
-      await editor.discard();
+      // Keep the draft (marked as applied) until the item is saved.
+      await editor.markAppliedAndClose(applied);
       setIsOpen(false);
-      await refreshDrafts();
     } catch (err) {
       setError(`Could not queue the upload: ${errorText(err)}`);
     } finally {
@@ -271,9 +309,25 @@ export function ItemAssistant({
   const renderEditor = () => {
     if (!draft) return null;
     const result = draft.result;
+    // Once photos are queued for Drive, changing them or the folder here
+    // wouldn't reach Drive, so those sections are read-only.
+    const uploadsLocked = Boolean(draft.applied?.folder);
 
     return (
       <div className="space-y-4">
+        {draft.applied && (
+          <div className="alert alert-info text-xs p-3">
+            <span>
+              Applied to the form on{' '}
+              {new Date(draft.applied.appliedAt).toLocaleString()}, but the item
+              hasn&apos;t been saved yet. Apply again to refill the form
+              {uploadsLocked
+                ? ' (photos already sent to Drive are reused)'
+                : ''}
+              ; this draft is removed once the item is saved.
+            </span>
+          </div>
+        )}
         <section className="space-y-1">
           <h4 className="text-xs font-semibold opacity-80">1. Photos</h4>
           <PhotoStrip
@@ -281,7 +335,7 @@ export function ItemAssistant({
             aiPhotoIds={draft.aiPhotoIds}
             previewPhotoId={draft.previewPhotoId}
             isImporting={isImporting}
-            disabled={isAnalyzing || isApplying}
+            disabled={isAnalyzing || isApplying || uploadsLocked}
             onAddFiles={handleAddFiles}
             onEdit={setEditingPhotoId}
             onRemove={handleRemovePhoto}
@@ -431,7 +485,7 @@ export function ItemAssistant({
               draft.parentFolder ? 'btn-neutral' : 'btn-outline btn-primary'
             }`}
             onClick={() => setIsDriveOpen(true)}
-            disabled={busy}
+            disabled={busy || uploadsLocked}
           >
             {draft.parentFolder
               ? `Inside: ${draft.parentFolder.name}`
@@ -442,7 +496,7 @@ export function ItemAssistant({
             placeholder="New folder name"
             value={draft.folderName}
             onChange={(event) => editor.setFolderName(event.target.value)}
-            disabled={busy || !draft.parentFolder}
+            disabled={busy || !draft.parentFolder || uploadsLocked}
           />
           {draft.parentFolder &&
             finalFolderName &&

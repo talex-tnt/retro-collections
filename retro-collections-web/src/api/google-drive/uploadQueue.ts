@@ -35,11 +35,23 @@ export interface UploadQueueState {
   jobs: UploadJob[];
   /** Drive token missing or expired; uploads resume after the user re-authorizes. */
   authNeeded: boolean;
+  /** Why uploads are waiting for sign-in, or why the last sign-in failed. */
+  authMessage: string | null;
 }
 
-let state: UploadQueueState = { userId: null, jobs: [], authNeeded: false };
+let state: UploadQueueState = {
+  userId: null,
+  jobs: [],
+  authNeeded: false,
+  authMessage: null,
+};
 const listeners = new Set<() => void>();
 const inFlight = new Set<string>();
+// Per in-flight job, so "retry now" and "cancel" can stop a stuck transfer.
+const controllers = new Map<string, AbortController>();
+const abortReasons = new Map<string, 'retry' | 'discard'>();
+// The user signed in but didn't grant Drive access: ask for consent again.
+let consentNeeded = false;
 const localUrls = new Map<string, string>();
 let retryTimer: number | undefined;
 let startingFor: string | null = null;
@@ -141,28 +153,35 @@ const scheduleRetry = () => {
 
 const runJob = async (job: UploadJob, token: string) => {
   inFlight.add(job.id);
+  const controller = new AbortController();
+  controllers.set(job.id, controller);
+  const { signal } = controller;
   await updateJob(job.id, { status: 'uploading' });
 
   try {
     // A previous attempt may have succeeded without us seeing the response.
     const alreadyExists =
-      job.attempts > 0 && (await driveFileExists(token, job.driveId));
+      job.attempts > 0 && (await driveFileExists(token, job.driveId, signal));
 
     if (!alreadyExists) {
       if (job.kind === 'folder') {
-        await createDriveFolderWithId(token, {
-          id: job.driveId,
-          name: job.name,
-          parentId: job.parentDriveId,
-        });
+        await createDriveFolderWithId(
+          token,
+          { id: job.driveId, name: job.name, parentId: job.parentDriveId },
+          signal
+        );
       } else {
         if (!job.blob) throw new Error('The photo is no longer available.');
-        await uploadDriveFileWithId(token, {
-          id: job.driveId,
-          name: job.name,
-          parentId: job.parentDriveId,
-          blob: job.blob,
-        });
+        await uploadDriveFileWithId(
+          token,
+          {
+            id: job.driveId,
+            name: job.name,
+            parentId: job.parentDriveId,
+            blob: job.blob,
+          },
+          signal
+        );
       }
     }
 
@@ -172,10 +191,42 @@ const runJob = async (job: UploadJob, token: string) => {
       error: undefined,
     });
   } catch (error) {
+    // Stopped on purpose: cancelled (job is gone) or "retry now".
+    const abortReason = abortReasons.get(job.id);
+    if (abortReason) {
+      abortReasons.delete(job.id);
+      if (abortReason === 'retry') {
+        await updateJob(job.id, { status: 'pending', nextAttemptAt: 0 });
+      }
+      return;
+    }
+
     if (error instanceof DriveRequestError && error.status === 401) {
       clearDriveWriteToken();
       await updateJob(job.id, { status: 'pending' });
-      setState({ authNeeded: true });
+      setState({
+        authNeeded: true,
+        authMessage:
+          'Your Google Drive session expired. Sign in again to continue the uploads.',
+      });
+      return;
+    }
+
+    // Signed in without granting Drive access: retrying can't help, the user
+    // has to sign in again and allow it.
+    if (
+      error instanceof DriveRequestError &&
+      error.status === 403 &&
+      /insufficient|scope|permission/i.test(error.message)
+    ) {
+      clearDriveWriteToken();
+      consentNeeded = true;
+      await updateJob(job.id, { status: 'pending' });
+      setState({
+        authNeeded: true,
+        authMessage:
+          'Google Drive access was not granted. Sign in again and allow access to Drive.',
+      });
       return;
     }
 
@@ -203,6 +254,7 @@ const runJob = async (job: UploadJob, token: string) => {
     }
   } finally {
     inFlight.delete(job.id);
+    controllers.delete(job.id);
     kick();
   }
 };
@@ -213,7 +265,14 @@ function kick() {
   const token = getDriveWriteToken();
   const hasPending = state.jobs.some((job) => job.status === 'pending');
   if (!token) {
-    if (hasPending) setState({ authNeeded: true });
+    if (hasPending) {
+      setState({
+        authNeeded: true,
+        authMessage:
+          state.authMessage ??
+          'Sign in to Google Drive to continue the uploads.',
+      });
+    }
     return;
   }
 
@@ -312,13 +371,18 @@ export const uploadQueue = {
           : job
       );
 
-    setState({ userId, jobs: sortJobs(jobs), authNeeded: false });
+    setState({
+      userId,
+      jobs: sortJobs(jobs),
+      authNeeded: false,
+      authMessage: null,
+    });
     kick();
   },
 
   stop() {
     window.clearTimeout(retryTimer);
-    setState({ userId: null, jobs: [], authNeeded: false });
+    setState({ userId: null, jobs: [], authNeeded: false, authMessage: null });
   },
 
   async enqueue(jobs: UploadJob[]) {
@@ -327,18 +391,36 @@ export const uploadQueue = {
     kick();
   },
 
-  /** Must be called from a click handler: it may open the Google popup. */
+  /**
+   * Must be called from a click handler: it may open the Google popup.
+   * Rejects (and records why) if sign-in fails or Drive access is declined.
+   */
   async authorize() {
-    await requestDriveWriteToken();
-    setState({ authNeeded: false });
+    try {
+      await requestDriveWriteToken({ forceConsent: consentNeeded });
+    } catch (error) {
+      setState({
+        authMessage: (error as Error)?.message || 'Google sign-in failed.',
+      });
+      throw error;
+    }
+    consentNeeded = false;
+    setState({ authNeeded: false, authMessage: null });
     kick();
   },
 
+  /**
+   * Retries a batch right away: failed and waiting jobs start now, and a
+   * transfer that is stuck in progress is restarted.
+   */
   async retryBatch(batchId: string) {
-    const jobs = state.jobs.filter(
-      (job) => job.batchId === batchId && job.status === 'error'
-    );
-    for (const job of jobs) {
+    for (const job of state.jobs) {
+      if (job.batchId !== batchId || job.status === 'done') continue;
+      if (inFlight.has(job.id)) {
+        abortReasons.set(job.id, 'retry');
+        controllers.get(job.id)?.abort();
+        continue;
+      }
       await updateJob(job.id, {
         status: 'pending',
         nextAttemptAt: 0,
@@ -350,13 +432,24 @@ export const uploadQueue = {
     kick();
   },
 
+  /** Cancels a batch, including transfers in progress. */
   async discardBatch(batchId: string) {
     const ids = state.jobs
-      .filter((job) => job.batchId === batchId && !inFlight.has(job.id))
+      .filter((job) => job.batchId === batchId)
       .map((job) => job.id);
+    for (const jobId of ids) {
+      if (inFlight.has(jobId)) {
+        abortReasons.set(jobId, 'discard');
+        controllers.get(jobId)?.abort();
+      }
+    }
     await deleteUploadJobs(ids);
     setState({ jobs: state.jobs.filter((job) => !ids.includes(job.id)) });
+    kick();
   },
+
+  hasBatch: (batchId: string) =>
+    state.jobs.some((job) => job.batchId === batchId),
 
   async clearCompleted() {
     const batchIds = new Set(state.jobs.map((job) => job.batchId));

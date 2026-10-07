@@ -15,6 +15,7 @@ import SelectTags from './SelectTags';
 import ImportModal from './ImportModal';
 import DriveFolderModal from './DriveFolderModal';
 import { ItemAssistant } from './ItemAssistant';
+import { deleteDraft } from '../utils/assistantDb';
 import type { PreparedImportItem } from '../utils/useDriveImport';
 import type { FolderType } from '../api/firestore/types/shared';
 
@@ -49,6 +50,8 @@ function NewItem({
     name: string;
   } | null>(null);
   const [showDrivePopup, setShowDrivePopup] = useState<boolean>(false);
+  // Assistant draft the form was filled from; deleted once the item is saved.
+  const [assistantDraftId, setAssistantDraftId] = useState<string | null>(null);
 
   const isGame = selectedTags.map((tag) => tag.toLowerCase()).includes('game');
 
@@ -88,7 +91,12 @@ function NewItem({
     tags?: string[];
     uploadedFolderId?: { id: string; name: string };
     fallbackPreview?: { id: string; name: string };
+    draftId?: string;
   }) => {
+    if (suggestions.draftId) {
+      setAssistantDraftId(suggestions.draftId);
+    }
+
     if (typeof suggestions.title === 'string') {
       setName(suggestions.title);
     }
@@ -150,6 +158,14 @@ function NewItem({
         isPublicItem,
         collectionId,
       } as Parameters<typeof createItem>[0]).unwrap();
+
+      if (assistantDraftId) {
+        // Only now is the assistant's work safely stored in the item.
+        await deleteDraft(assistantDraftId).catch((error) =>
+          console.error('Error removing assistant draft:', error)
+        );
+        setAssistantDraftId(null);
+      }
 
       setName('');
       setDescription('');

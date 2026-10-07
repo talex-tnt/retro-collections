@@ -27,9 +27,16 @@ const driveFetch = async <T>(
   token: string,
   init: RequestInit = {}
 ): Promise<T> => {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  // Callers may pass their own signal (to cancel a stuck upload); keep the
+  // timeout either way.
+  const signal =
+    init.signal && typeof AbortSignal.any === 'function'
+      ? AbortSignal.any([init.signal, timeout])
+      : (init.signal ?? timeout);
   const response = await fetch(url, {
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ...init,
+    signal,
     headers: { Authorization: `Bearer ${token}`, ...init.headers },
   });
 
@@ -71,9 +78,11 @@ export const listChildFolderNames = async (token: string, parentId: string) => {
 
 export const createDriveFolderWithId = (
   token: string,
-  { id, name, parentId }: { id: string; name: string; parentId: string }
+  { id, name, parentId }: { id: string; name: string; parentId: string },
+  signal?: AbortSignal
 ) =>
   driveFetch<{ id: string }>(`${DRIVE}/files?fields=id`, token, {
+    signal,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -91,7 +100,8 @@ export const uploadDriveFileWithId = (
     name,
     parentId,
     blob,
-  }: { id: string; name: string; parentId: string; blob: Blob }
+  }: { id: string; name: string; parentId: string; blob: Blob },
+  signal?: AbortSignal
 ) => {
   const form = new FormData();
   form.append(
@@ -105,13 +115,17 @@ export const uploadDriveFileWithId = (
   return driveFetch<{ id: string }>(
     `${UPLOAD}/files?uploadType=multipart&fields=id`,
     token,
-    { method: 'POST', body: form }
+    { method: 'POST', body: form, signal }
   );
 };
 
-export const driveFileExists = async (token: string, id: string) => {
+export const driveFileExists = async (
+  token: string,
+  id: string,
+  signal?: AbortSignal
+) => {
   try {
-    await driveFetch(`${DRIVE}/files/${id}?fields=id`, token);
+    await driveFetch(`${DRIVE}/files/${id}?fields=id`, token, { signal });
     return true;
   } catch (error) {
     if (error instanceof DriveRequestError && error.status === 404) {

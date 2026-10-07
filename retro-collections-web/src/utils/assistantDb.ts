@@ -25,6 +25,20 @@ export interface ItemDraft {
   result: AIAnalysisResult | null;
   apply: { title: boolean; description: boolean; tags: boolean };
   providerId: string;
+  /**
+   * Set once the draft has been applied to the item form. The draft is kept
+   * until the item is actually saved, so a reload before saving loses
+   * nothing; re-applying reuses these uploads instead of queueing them again.
+   */
+  applied?: AppliedDraft;
+}
+
+export interface AppliedDraft {
+  appliedAt: number;
+  /** Upload batch in the queue, if photos were sent to Drive. */
+  batchId: string | null;
+  folder: { id: string; name: string } | null;
+  preview: { id: string; name: string } | null;
 }
 
 export type UploadJobStatus = 'pending' | 'uploading' | 'done' | 'error';
@@ -78,6 +92,17 @@ const dbPromise = openDB<AssistantDB>('rc-item-assistant', 1, {
 
 /* ---------------- DRAFTS ---------------- */
 
+const draftListeners = new Set<() => void>();
+const notifyDrafts = () => draftListeners.forEach((listener) => listener());
+
+/** Called whenever a draft is saved or deleted (e.g. to refresh counts). */
+export const onDraftsChanged = (listener: () => void) => {
+  draftListeners.add(listener);
+  return () => {
+    draftListeners.delete(listener);
+  };
+};
+
 export const listDrafts = async (userId: string) => {
   const db = await dbPromise;
   const drafts = await db.getAllFromIndex('drafts', 'userId', userId);
@@ -87,6 +112,7 @@ export const listDrafts = async (userId: string) => {
 export const saveDraft = async (draft: ItemDraft) => {
   const db = await dbPromise;
   await db.put('drafts', draft);
+  notifyDrafts();
 };
 
 export const getDraftPhotos = async (draftId: string) => {
@@ -116,6 +142,7 @@ export const deleteDraft = async (draftId: string) => {
     ...photoKeys.map((key) => tx.objectStore('draftPhotos').delete(key)),
     tx.done,
   ]);
+  notifyDrafts();
 };
 
 /* ---------------- UPLOAD JOBS ---------------- */
