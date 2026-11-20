@@ -10,11 +10,14 @@ const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
 export class DriveRequestError extends Error {
   status: number;
+  /** Drive's machine-readable reason, e.g. "insufficientFilePermissions". */
+  reason?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, reason?: string) {
     super(message);
     this.name = 'DriveRequestError';
     this.status = status;
+    this.reason = reason;
   }
 }
 
@@ -42,11 +45,21 @@ const driveFetch = async <T>(
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as {
-      error?: { message?: string };
+      error?: {
+        message?: string;
+        status?: string;
+        errors?: Array<{ reason?: string }>;
+        details?: Array<{ reason?: string }>;
+      };
     };
+    const reason =
+      body.error?.errors?.[0]?.reason ??
+      body.error?.details?.find((detail) => detail.reason)?.reason ??
+      body.error?.status;
     throw new DriveRequestError(
       body.error?.message || `Drive request failed (${response.status})`,
-      response.status
+      response.status,
+      reason
     );
   }
 

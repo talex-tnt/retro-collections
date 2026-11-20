@@ -135,6 +135,45 @@ const isRetryable = (error: unknown) => {
   return error.status === 403 && /rate|quota/i.test(error.message);
 };
 
+/** Message plus the details needed to tell failures apart (status, reason). */
+const describeError = (error: unknown) => {
+  if (error instanceof DriveRequestError) {
+    const detail = [`HTTP ${error.status}`, error.reason]
+      .filter(Boolean)
+      .join(', ');
+    return `${error.message} (${detail})`;
+  }
+  if (error instanceof Error) {
+    return error.name && error.name !== 'Error'
+      ? `${error.name}: ${error.message || 'no details'}`
+      : error.message || 'Upload failed.';
+  }
+  return String(error || 'Upload failed.');
+};
+
+/**
+ * The token lacks the Drive scope (fixable by signing in again), as opposed
+ * to a 403 about one specific file, which a new sign-in can't fix.
+ */
+const isMissingScope = (error: DriveRequestError) =>
+  error.status === 403 &&
+  (error.reason === 'insufficientPermissions' ||
+    error.reason === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' ||
+    /authentication scopes/i.test(error.message));
+
+const UNREADABLE_PHOTO_MESSAGE =
+  "The phone's local copy of this photo can't be read anymore. Cancel this upload and add the photo to the item again from your gallery.";
+
+/** Safari can drop Blobs stored in IndexedDB; reading one then fails. */
+const isBlobReadable = async (blob: Blob) => {
+  try {
+    await blob.slice(0, 1).arrayBuffer();
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const backoffMs = (attempts: number) =>
   Math.min(60_000, 2_000 * 2 ** (attempts - 1));
 
@@ -172,6 +211,14 @@ const runJob = async (job: UploadJob, token: string) => {
         );
       } else {
         if (!job.blob) throw new Error('The photo is no longer available.');
+        if (!(await isBlobReadable(job.blob))) {
+          await updateJob(job.id, {
+            status: 'error',
+            attempts: job.attempts + 1,
+            error: UNREADABLE_PHOTO_MESSAGE,
+          });
+          return;
+        }
         await uploadDriveFileWithId(
           token,
           {
@@ -201,9 +248,12 @@ const runJob = async (job: UploadJob, token: string) => {
       return;
     }
 
+    const message = describeError(error);
+    console.error(`[uploadQueue] ${job.kind} "${job.name}" failed:`, error);
+
     if (error instanceof DriveRequestError && error.status === 401) {
       clearDriveWriteToken();
-      await updateJob(job.id, { status: 'pending' });
+      await updateJob(job.id, { status: 'pending', error: message });
       setState({
         authNeeded: true,
         authMessage:
@@ -214,14 +264,10 @@ const runJob = async (job: UploadJob, token: string) => {
 
     // Signed in without granting Drive access: retrying can't help, the user
     // has to sign in again and allow it.
-    if (
-      error instanceof DriveRequestError &&
-      error.status === 403 &&
-      /insufficient|scope|permission/i.test(error.message)
-    ) {
+    if (error instanceof DriveRequestError && isMissingScope(error)) {
       clearDriveWriteToken();
       consentNeeded = true;
-      await updateJob(job.id, { status: 'pending' });
+      await updateJob(job.id, { status: 'pending', error: message });
       setState({
         authNeeded: true,
         authMessage:
@@ -240,7 +286,6 @@ const runJob = async (job: UploadJob, token: string) => {
     }
 
     const attempts = job.attempts + 1;
-    const message = (error as Error)?.message || 'Upload failed.';
 
     if (isRetryable(error) && attempts < MAX_ATTEMPTS) {
       await updateJob(job.id, {
@@ -463,6 +508,23 @@ export const uploadQueue = {
       .map((job) => job.id);
     await deleteUploadJobs(ids);
     setState({ jobs: state.jobs.filter((job) => !ids.includes(job.id)) });
+  },
+
+  /** Saves a queued photo to the device, so it is never stuck in the queue. */
+  async savePhoto(jobId: string) {
+    const job = state.jobs.find((item) => item.id === jobId);
+    if (!job?.blob) throw new Error('The photo is no longer available.');
+    if (!(await isBlobReadable(job.blob))) {
+      throw new Error(UNREADABLE_PHOTO_MESSAGE);
+    }
+    const url = URL.createObjectURL(job.blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${job.batchLabel} - ${job.name}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   },
 
   /** Local object URL for a photo still queued (or uploaded this session). */

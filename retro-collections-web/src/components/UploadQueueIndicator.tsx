@@ -46,7 +46,13 @@ const describeBatch = (
     return { text: failedJob.error || 'Upload failed.', tone: 'error' };
   }
   if (authNeeded) {
-    return { text: 'Waiting for Google Drive sign-in', tone: 'warning' };
+    const lastError = batch.jobs.find((job) => job.error)?.error;
+    return {
+      text: `Waiting for Google Drive sign-in${
+        lastError ? ` (last error: ${lastError})` : ''
+      }`,
+      tone: 'warning',
+    };
   }
 
   const folder = batch.jobs.find((job) => job.kind === 'folder');
@@ -137,6 +143,14 @@ export default function UploadQueueIndicator() {
     }
   };
 
+  const handleSavePhoto = async (jobId: string) => {
+    try {
+      await uploadQueue.savePhoto(jobId);
+    } catch (error) {
+      window.alert((error as Error)?.message || 'Could not save the photo.');
+    }
+  };
+
   const handleCancel = (batch: BatchSummary) => {
     if (
       window.confirm(
@@ -195,6 +209,42 @@ export default function UploadQueueIndicator() {
                 <p className={`break-words ${TONE_CLASS[status.tone]}`}>
                   {status.text}
                 </p>
+                {!batch.complete &&
+                  batch.jobs
+                    .filter(
+                      (job) => job.kind === 'file' && job.status !== 'done'
+                    )
+                    .map((job) => (
+                      <div
+                        key={job.id}
+                        className="flex items-start justify-between gap-2 border-t border-base-300 pt-1"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate">
+                            🖼 {job.name}{' '}
+                            <span className="opacity-60">
+                              ({job.status}, {job.attempts} attempt
+                              {job.attempts === 1 ? '' : 's'})
+                            </span>
+                          </p>
+                          {job.error && (
+                            <p className="break-words text-error opacity-80">
+                              {job.error}
+                            </p>
+                          )}
+                        </div>
+                        {job.blob && (
+                          <button
+                            type="button"
+                            className="btn btn-xs btn-ghost shrink-0"
+                            onClick={() => void handleSavePhoto(job.id)}
+                            title="Save this photo to your device"
+                          >
+                            Save photo
+                          </button>
+                        )}
+                      </div>
+                    ))}
                 {!batch.complete && (
                   <div className="flex gap-1">
                     <button
