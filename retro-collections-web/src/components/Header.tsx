@@ -57,7 +57,7 @@ function UserMenu({
 
       <div
         tabIndex={0}
-        className="dropdown-content z-10 mt-3 w-80 rounded-box border border-base-300 bg-base-100 p-4 shadow-xl"
+        className="dropdown-content z-[1000] mt-3 w-80 rounded-box border border-base-300 bg-base-100 p-4 shadow-xl"
       >
         {error && <div className="alert alert-error mb-3">{error}</div>}
 

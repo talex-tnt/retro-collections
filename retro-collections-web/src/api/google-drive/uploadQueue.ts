@@ -28,7 +28,8 @@ import {
 
 const CONCURRENCY = 3;
 const MAX_ATTEMPTS = 6;
-const COMPLETED_BATCH_TTL_MS = 24 * 60 * 60 * 1000;
+// How long a finished batch stays in the indicator as "Uploaded".
+const COMPLETED_BATCH_LINGER_MS = 5_000;
 
 export interface UploadQueueState {
   userId: string | null;
@@ -190,6 +191,30 @@ const scheduleRetry = () => {
   }
 };
 
+const isBatchComplete = (batchId: string) =>
+  state.jobs
+    .filter((job) => job.batchId === batchId)
+    .every((job) => job.status === 'done');
+
+const removeBatchIfComplete = async (batchId: string) => {
+  if (!isBatchComplete(batchId)) return;
+  const ids = state.jobs
+    .filter((job) => job.batchId === batchId)
+    .map((job) => job.id);
+  if (ids.length === 0) return;
+  await deleteUploadJobs(ids);
+  setState({ jobs: state.jobs.filter((job) => !ids.includes(job.id)) });
+};
+
+/** Shows "Uploaded" briefly, then drops the finished batch. */
+const scheduleBatchCleanup = (batchId: string) => {
+  if (!isBatchComplete(batchId)) return;
+  window.setTimeout(
+    () => void removeBatchIfComplete(batchId),
+    COMPLETED_BATCH_LINGER_MS
+  );
+};
+
 const runJob = async (job: UploadJob, token: string) => {
   inFlight.add(job.id);
   const controller = new AbortController();
@@ -237,6 +262,7 @@ const runJob = async (job: UploadJob, token: string) => {
       blob: undefined,
       error: undefined,
     });
+    scheduleBatchCleanup(job.batchId);
   } catch (error) {
     // Stopped on purpose: cancelled (job is gone) or "retry now".
     const abortReason = abortReasons.get(job.id);
@@ -282,6 +308,7 @@ const runJob = async (job: UploadJob, token: string) => {
       (await driveFileExists(token, job.driveId).catch(() => false))
     ) {
       await updateJob(job.id, { status: 'done', blob: undefined });
+      scheduleBatchCleanup(job.batchId);
       return;
     }
 
@@ -387,7 +414,6 @@ export const uploadQueue = {
     const stored = await listUploadJobs(userId).finally(() => {
       startingFor = null;
     });
-    const now = Date.now();
     const staleBatchIds = new Set<string>();
 
     const byBatch = new Map<string, UploadJob[]>();
@@ -395,9 +421,8 @@ export const uploadQueue = {
       byBatch.set(job.batchId, [...(byBatch.get(job.batchId) ?? []), job]);
     }
     for (const [batchId, jobs] of byBatch) {
-      const allDone = jobs.every((job) => job.status === 'done');
-      const lastUpdate = Math.max(...jobs.map((job) => job.updatedAt));
-      if (allDone && now - lastUpdate > COMPLETED_BATCH_TTL_MS) {
+      // Finished in an earlier visit: nothing left to show.
+      if (jobs.every((job) => job.status === 'done')) {
         staleBatchIds.add(batchId);
       }
     }
